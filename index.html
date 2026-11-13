@@ -1,0 +1,406 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Door Lock</title>
+
+  <!-- MQTT Library -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #eef2f7;
+      color: #1e293b;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 440px;
+      margin: 35px auto;
+      background: white;
+      padding: 25px;
+      border-radius: 20px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 25px;
+    }
+
+    .header h1 {
+      font-size: 25px;
+      margin-bottom: 8px;
+    }
+
+    .header p {
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .connection {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px;
+      background: #f1f5f9;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #94a3b8;
+      margin-right: 6px;
+    }
+
+    .status-card {
+      background: #dc2626;
+      color: white;
+      padding: 28px 15px;
+      text-align: center;
+      border-radius: 15px;
+      margin-bottom: 20px;
+      transition: background 0.3s;
+    }
+
+    .status-card.open {
+      background: #16a34a;
+    }
+
+    .status-card h2 {
+      font-size: 26px;
+      margin: 10px 0;
+    }
+
+    .door-icon {
+      font-size: 42px;
+    }
+
+    .status-card p {
+      font-size: 13px;
+      margin: 0;
+    }
+
+    .button {
+      width: 100%;
+      padding: 17px;
+      border: none;
+      border-radius: 11px;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin: 7px 0;
+      transition: 0.2s;
+    }
+
+    .button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn-open {
+      background: #16a34a;
+    }
+
+    .btn-lock {
+      background: #dc2626;
+    }
+
+    .button:not(:disabled):active {
+      transform: scale(0.98);
+    }
+
+    .info {
+      text-align: center;
+      margin-top: 22px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .notice {
+      padding: 12px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-radius: 10px;
+      font-size: 12px;
+      margin-top: 15px;
+      text-align: center;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <div class="header">
+    <h1>SMART DOOR LOCK</h1>
+    <p>INTERNET OF THINGS · ESP32</p>
+  </div>
+
+  <div class="connection">
+    <span>Koneksi ESP32</span>
+    <span id="connectionText">
+      <span class="dot"></span> Menghubungkan...
+    </span>
+  </div>
+
+  <div class="status-card" id="statusCard">
+    <div class="door-icon" id="doorIcon">🔒</div>
+    <p>STATUS PINTU</p>
+    <h2 id="doorStatus">MENUNGGU DATA</h2>
+    <p id="statusInfo">Menunggu status dari ESP32</p>
+  </div>
+
+  <button
+    class="button btn-open"
+    id="openButton"
+    disabled
+    onclick="sendCommand('OPEN')">
+    🔓 BUKA PINTU
+  </button>
+
+  <button
+    class="button btn-lock"
+    id="lockButton"
+    disabled
+    onclick="sendCommand('LOCK')">
+    🔒 TUTUP PINTU
+  </button>
+
+  <div class="notice" id="message">
+    Menghubungkan ke server...
+  </div>
+
+  <div class="info">
+    SMART DOOR LOCK SYSTEM<br>
+    Powered by ESP32 & MQTT<br>
+    <span id="lastUpdate">Belum ada pembaruan status</span>
+  </div>
+
+</div>
+
+<script>
+
+// ===================================
+// 1. KONFIGURASI MQTT
+// ===================================
+
+const brokerURL =
+  "wss://test.mosquitto.org:8081/mqtt";
+
+const topicCommand =
+  "kelas/smartdoor/esp32demo-7319/cmd";
+
+const topicStatus =
+  "kelas/smartdoor/esp32demo-7319/status";
+
+// ===================================
+// 2. ELEMEN WEBSITE
+// ===================================
+
+const connectionText =
+  document.getElementById("connectionText");
+
+const statusCard =
+  document.getElementById("statusCard");
+
+const doorStatus =
+  document.getElementById("doorStatus");
+
+const doorIcon =
+  document.getElementById("doorIcon");
+
+const statusInfo =
+  document.getElementById("statusInfo");
+
+const message =
+  document.getElementById("message");
+
+const openButton =
+  document.getElementById("openButton");
+
+const lockButton =
+  document.getElementById("lockButton");
+
+const lastUpdate =
+  document.getElementById("lastUpdate");
+
+// ===================================
+// 3. KONEKSI MQTT
+// ===================================
+
+const client = mqtt.connect(brokerURL, {
+  clientId:
+    "SmartDoorWeb_" +
+    Math.random().toString(16).slice(2),
+
+  clean: true,
+  connectTimeout: 10000,
+  reconnectPeriod: 3000
+});
+
+// ===================================
+// 4. KETIKA TERHUBUNG
+// ===================================
+
+client.on("connect", function() {
+
+  connectionText.innerHTML =
+    '<span class="dot" style="background:#16a34a"></span> ONLINE';
+
+  openButton.disabled = false;
+  lockButton.disabled = false;
+
+  message.textContent =
+    "Website berhasil terhubung ke MQTT.";
+
+  client.subscribe(topicStatus);
+
+});
+
+// ===================================
+// 5. KETIKA KONEKSI TERPUTUS
+// ===================================
+
+client.on("offline", function() {
+
+  connectionText.innerHTML =
+    '<span class="dot" style="background:#dc2626"></span> OFFLINE';
+
+  openButton.disabled = true;
+  lockButton.disabled = true;
+
+  message.textContent =
+    "Koneksi terputus. Mencoba menghubungkan kembali...";
+
+});
+
+client.on("reconnect", function() {
+
+  connectionText.textContent =
+    "Menghubungkan kembali...";
+
+});
+
+client.on("error", function(error) {
+
+  console.error("MQTT Error:", error);
+
+});
+
+// ===================================
+// 6. MENERIMA STATUS PINTU
+// ===================================
+
+client.on("message", function(topic, payload) {
+
+  if (topic === topicStatus) {
+
+    const status = payload.toString();
+
+    if (status === "OPEN") {
+
+      statusCard.classList.add("open");
+
+      doorIcon.textContent = "🔓";
+
+      doorStatus.textContent = "TERBUKA";
+
+      statusInfo.textContent =
+        "Pintu sedang terbuka";
+
+    }
+
+    else if (status === "LOCKED") {
+
+      statusCard.classList.remove("open");
+
+      doorIcon.textContent = "🔒";
+
+      doorStatus.textContent = "TERKUNCI";
+
+      statusInfo.textContent =
+        "Pintu berhasil dikunci";
+
+    }
+
+    else {
+      return;
+    }
+
+    lastUpdate.textContent =
+      "Pembaruan: " +
+      new Date().toLocaleTimeString("id-ID");
+
+  }
+
+});
+
+// ===================================
+// 7. MENGIRIM PERINTAH
+// ===================================
+
+function sendCommand(command) {
+
+  if (!client.connected) {
+
+    message.textContent =
+      "MQTT belum terhubung.";
+
+    return;
+
+  }
+
+  client.publish(
+    topicCommand,
+    command,
+    { qos: 0, retain: false },
+    function(error) {
+
+      if (error) {
+
+        message.textContent =
+          "Perintah gagal dikirim.";
+
+      }
+
+      else if (command === "OPEN") {
+
+        message.textContent =
+          "Perintah BUKA dikirim ke ESP32.";
+
+      }
+
+      else {
+
+        message.textContent =
+          "Perintah TUTUP dikirim ke ESP32.";
+
+      }
+
+    }
+  );
+
+}
+
+</script>
+
+</body>
+</html>
